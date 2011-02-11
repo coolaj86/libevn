@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.6)
-project(EVN)
+project(EVN C)
 include_directories(${EVN_SOURCE_DIR}/include)
 #include_directories("${CMAKE_SOURCE_DIR}")
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Werror")
