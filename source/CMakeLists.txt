@@ -4,14 +4,14 @@ include_directories(${EVN_SOURCE_DIR}/include)
 #include_directories("${CMAKE_SOURCE_DIR}")
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Werror")
 
-add_library(buffer-list STATIC buffer-list.c)
-add_library(inbuf STATIC inbuf.c)
+add_library(evn-buffer-list STATIC evn-buffer-list.c)
+add_library(evn-inbuf STATIC evn-inbuf.c)
 
-add_library(evn SHARED evn.c evn.h buffer-list inbuf)
+add_library(evn SHARED evn.c evn.h evn-buffer-list evn-inbuf)
 target_link_libraries(evn ev)
 
-add_executable(bufferlist-test buffer-list-test.c buffer-list)
-add_executable(inbuf-test inbuf-test.c inbuf)
+add_executable(evn-bufferlist-test evn-buffer-list-test.c evn-buffer-list)
+add_executable(evn-inbuf-test evn-inbuf-test.c evn-inbuf)
 
 add_executable(echo-server echo-server.c)
 target_link_libraries(echo-server evn)
