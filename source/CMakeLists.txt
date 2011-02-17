@@ -3,7 +3,7 @@ project(EVN C)
 include_directories(${EVN_SOURCE_DIR}/include)
 #include_directories("${CMAKE_SOURCE_DIR}")
 SET(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Werror")
-SET(CMAKE_C_FLAGS_DEBUG "-g3 -ggdb3")
+SET(CMAKE_C_FLAGS_DEBUG "-DDEBUG -g3 -ggdb3")
 
 add_library(evn-buffer-list STATIC evn-buffer-list.c)
 add_library(evn-inbuf STATIC evn-inbuf.c)

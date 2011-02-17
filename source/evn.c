@@ -504,7 +504,9 @@ struct evn_stream* evn_create_connection_tcp_stream(EV_P_ int port, char* addres
 
   stream_fd = socket(AF_INET, SOCK_STREAM, 0);
   if (-1 == stream_fd) {
+    #ifdef DEBUG
     perror("[EVN] TCP socket connection");
+    #endif
     return NULL;
   }
   stream = evn_stream_create(stream_fd);
@@ -518,7 +520,9 @@ struct evn_stream* evn_create_connection_tcp_stream(EV_P_ int port, char* addres
   stream->socket_len = sizeof(struct sockaddr);
 
   if (-1 == connect(stream_fd, (struct sockaddr*) stream->socket, stream->socket_len)) {
+    #ifdef DEBUG
     fprintf(stderr, "[EVN] connect to %s: %s\n", address, strerror(errno));
+    #endif
     evn_stream_destroy(EV_A_ stream);
     stream = NULL;
   }
@@ -534,7 +538,9 @@ struct evn_stream* evn_create_connection_unix_stream(EV_P_ char* sock_path)
 
   stream_fd = socket(AF_UNIX, SOCK_STREAM, 0);
   if (-1 == stream_fd) {
+    #ifdef DEBUG
     perror("[EVN] Unix Stream socket connection");
+    #endif
     return NULL;
   }
   stream = evn_stream_create(stream_fd);
@@ -550,7 +556,9 @@ struct evn_stream* evn_create_connection_unix_stream(EV_P_ char* sock_path)
   stream->socket_len = strlen(sock->sun_path) + 1 + sizeof(sock->sun_family);
 
   if (-1 == connect(stream_fd, (struct sockaddr *) sock, stream->socket_len)) {
+    #ifdef DEBUG
     fprintf(stderr, "[EVN] connect to %s: %s\n", sock_path, strerror(errno));
+    #endif
     evn_stream_destroy(EV_A_ stream);
     stream = NULL;
   }
