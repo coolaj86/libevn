@@ -11,7 +11,7 @@
 static int evn_priv_unix_create(struct sockaddr_un* socket_un, char* sock_path);
 static int evn_priv_tcp_create(struct sockaddr_in* socket_in, int port, char* sock_path);
 
-static bool evn_stream_priv_send(struct evn_stream* stream, void* data, int size);
+static bool evn_stream_priv_send(EV_P, struct evn_stream* stream, void* data, int size);
 
 inline struct evn_stream* evn_stream_create(int fd) {
   evn_debug("evn_stream_create");
@@ -60,7 +60,13 @@ void evn_stream_priv_on_read(EV_P_ ev_io *w, int revents)
 
   if (length < 0)
   {
-    if (stream->on_error) { stream->on_error(EV_A_ stream, &error); }
+    if (stream->on_error) {
+      error.error_number = errno;
+      snprintf(error.message, sizeof error.message, "read failed, now destroying stream: %s", strerror(errno));
+      stream->on_error(EV_A, stream, &error);
+    }
+    evn_stream_destroy(EV_A, stream);
+    return;
   }
   else if (0 == length)
   {
@@ -115,6 +121,7 @@ void evn_server_priv_on_connection(EV_P_ ev_io *w, int revents)
 
   int stream_fd;
   struct evn_stream* stream;
+  struct evn_exception error;
 
   // since ev_io is the first member,
   // watcher `w` has the address of the
@@ -128,8 +135,14 @@ void evn_server_priv_on_connection(EV_P_ ev_io *w, int revents)
     {
       if( errno != EAGAIN && errno != EWOULDBLOCK )
       {
-        fprintf(stderr, "accept() failed errno=%i (%s)", errno, strerror(errno));
-        exit(EXIT_FAILURE);
+        if (server->on_error)
+        {
+          error.error_number = errno;
+          snprintf(error.message, sizeof error.message, "[EVN] accept failed for unknown reason: %s", strerror(errno));
+          server->on_error(server->EV_A, server, &error);
+        }
+        evn_server_destroy(EV_A, server);
+        return;
       }
       break;
     }
@@ -168,14 +181,13 @@ static int evn_priv_tcp_create(struct sockaddr_in* socket_in, int port, char* ad
   // Setup a tcp socket listener.
   fd = socket(AF_INET, SOCK_STREAM, 0);
   if (-1 == fd) {
-    perror("[EVN] tcp socket create");
-    exit(EXIT_FAILURE);
+    return -1;
   }
 
   // Set it non-blocking
   if (-1 == evn_set_nonblock(fd)) {
-    perror("echo server socket nonblock");
-    exit(EXIT_FAILURE);
+    close(fd);
+    return -1;
   }
 
   // Set it as a tcp socket
@@ -195,14 +207,13 @@ static int evn_priv_unix_create(struct sockaddr_un* socket_un, char* sock_path)
   // Setup a unix socket listener.
   fd = socket(AF_UNIX, SOCK_STREAM, 0);
   if (-1 == fd) {
-    perror("echo server socket");
-    exit(EXIT_FAILURE);
+    return -1;
   }
 
   // Set it non-blocking
   if (-1 == evn_set_nonblock(fd)) {
-    perror("echo server socket nonblock");
-    exit(EXIT_FAILURE);
+    close(fd);
+    return -1;
   }
 
   // Set it as unix socket
@@ -218,6 +229,7 @@ int evn_server_close(EV_P_ struct evn_server* server)
 {
   ev_io_stop(server->EV_A_ &server->io);
   if (server->on_close) { server->on_close(server->EV_A_ server); }
+  free(server->socket);
   free(server);
   return 0;
 }
@@ -241,6 +253,7 @@ int evn_server_listen(struct evn_server* server, int port, char* address)
   int fd;
   struct sockaddr_un* sock_unix;
   struct sockaddr_in* sock_inet;
+  struct evn_exception error;
   // TODO array_init(&server->streams, 128);
 
   if (0 == port)
@@ -259,17 +272,41 @@ int evn_server_listen(struct evn_server* server, int port, char* address)
     server->socket_len = sizeof(struct sockaddr);
   }
 
+  if (-1 == fd)
+  {
+    if (server->on_error)
+    {
+      error.error_number = errno;
+      snprintf(error.message, sizeof error.message, "[EVN] failed to open server file descriptor: %s", strerror(errno));
+      server->on_error(server->EV_A, server, &error);
+    }
+    evn_server_destroy(server->EV_A, server);
+    return -1;
+  }
+
 
   if (-1 == bind(fd, (struct sockaddr*) server->socket, server->socket_len))
   {
-    perror("[EVN] server bind");
-    exit(EXIT_FAILURE);
+    if (server->on_error)
+    {
+      error.error_number = errno;
+      snprintf(error.message, sizeof error.message, "[EVN] failed to bind server: %s", strerror(errno));
+      server->on_error(server->EV_A, server, &error);
+    }
+    evn_server_destroy(server->EV_A, server);
+    return -1;
   }
 
   // TODO max_queue
   if (-1 == listen(fd, max_queue)) {
-    perror("listen");
-    exit(EXIT_FAILURE);
+    if (server->on_error)
+    {
+      error.error_number = errno;
+      snprintf(error.message, sizeof error.message, "[EVN] listen failed: %s", strerror(errno));
+      server->on_error(server->EV_A, server, &error);
+    }
+    evn_server_destroy(server->EV_A, server);
+    return -1;
   }
 
   ev_io_init(&server->io, evn_server_priv_on_connection, fd, EV_READ);
@@ -287,7 +324,7 @@ bool evn_stream_write(EV_P_ struct evn_stream* stream, void* data, int size)
 {
   if (0 == stream->_priv_out_buffer->size)
   {
-    if (true == evn_stream_priv_send(stream, data, size))
+    if (true == evn_stream_priv_send(EV_A, stream, data, size))
     {
       evn_debugs("All data was sent without queueing");
       return true;
@@ -312,9 +349,10 @@ bool evn_stream_write(EV_P_ struct evn_stream* stream, void* data, int size)
   return false;
 }
 
-static bool evn_stream_priv_send(struct evn_stream* stream, void* data, int size)
+static bool evn_stream_priv_send(EV_P, struct evn_stream* stream, void* data, int size)
 {
   //const int MAX_SEND = 4096;
+  struct evn_exception error;
   int sent;
   evn_inbuf* buf = stream->_priv_out_buffer;
   int buf_size = buf->size;
@@ -326,7 +364,12 @@ static bool evn_stream_priv_send(struct evn_stream* stream, void* data, int size
     sent = send(stream->io.fd, buf->bottom, buf->size, MSG_DONTWAIT | EVN_NOSIGNAL);
     if (sent < 0)
     {
-      perror("send failed");
+      if (stream->on_error) {
+        error.error_number = errno;
+        snprintf(error.message, sizeof error.message, "send failed, now destroying stream: %s", strerror(errno));
+        stream->on_error(EV_A, stream, &error);
+      }
+      evn_stream_destroy(EV_A, stream);
       return false;
     }
     evn_inbuf_toss(buf, sent);
@@ -344,7 +387,12 @@ static bool evn_stream_priv_send(struct evn_stream* stream, void* data, int size
       sent = send(stream->io.fd, data, size, MSG_DONTWAIT | EVN_NOSIGNAL);
       if (sent < 0)
       {
-        perror("send failed");
+        if (stream->on_error) {
+          error.error_number = errno;
+          snprintf(error.message, sizeof error.message, "send failed, now destroying stream: %s", strerror(errno));
+          stream->on_error(EV_A, stream, &error);
+        }
+        evn_stream_destroy(EV_A, stream);
         return false;
       }
       if (sent != size) {
@@ -362,7 +410,12 @@ static bool evn_stream_priv_send(struct evn_stream* stream, void* data, int size
     sent = send(stream->io.fd, data, size, MSG_DONTWAIT | EVN_NOSIGNAL);
     if (sent < 0)
     {
-      perror("send failed");
+      if (stream->on_error) {
+        error.error_number = errno;
+        snprintf(error.message, sizeof error.message, "send failed, now destroying stream: %s", strerror(errno));
+        stream->on_error(EV_A, stream, &error);
+      }
+      evn_stream_destroy(EV_A, stream);
       return false;
     }
     if (sent != size) {
@@ -382,7 +435,7 @@ static void evn_stream_priv_on_writable(EV_P_ ev_io *w, int revents)
 
   evn_debugs("EV_WRITE");
 
-  evn_stream_priv_send(stream, NULL, 0);
+  evn_stream_priv_send(EV_A, stream, NULL, 0);
 
   // If the buffer is finally empty, send the `drain` event
   if (0 == stream->_priv_out_buffer->size)
@@ -452,7 +505,7 @@ struct evn_stream* evn_create_connection_tcp_stream(EV_P_ int port, char* addres
   stream_fd = socket(AF_INET, SOCK_STREAM, 0);
   if (-1 == stream_fd) {
     perror("[EVN] TCP socket connection");
-    exit(EXIT_FAILURE);
+    return NULL;
   }
   stream = evn_stream_create(stream_fd);
   stream->socket = malloc(sizeof(struct sockaddr_in));
@@ -466,7 +519,6 @@ struct evn_stream* evn_create_connection_tcp_stream(EV_P_ int port, char* addres
 
   if (-1 == connect(stream_fd, (struct sockaddr*) stream->socket, stream->socket_len)) {
     fprintf(stderr, "[EVN] connect to %s: %s\n", address, strerror(errno));
-    //exit(EXIT_FAILURE);
     evn_stream_destroy(EV_A_ stream);
     stream = NULL;
   }
@@ -483,7 +535,7 @@ struct evn_stream* evn_create_connection_unix_stream(EV_P_ char* sock_path)
   stream_fd = socket(AF_UNIX, SOCK_STREAM, 0);
   if (-1 == stream_fd) {
     perror("[EVN] Unix Stream socket connection");
-    exit(EXIT_FAILURE);
+    return NULL;
   }
   stream = evn_stream_create(stream_fd);
   stream->socket = malloc(sizeof(struct sockaddr_un));
@@ -499,7 +551,6 @@ struct evn_stream* evn_create_connection_unix_stream(EV_P_ char* sock_path)
 
   if (-1 == connect(stream_fd, (struct sockaddr *) sock, stream->socket_len)) {
     fprintf(stderr, "[EVN] connect to %s: %s\n", sock_path, strerror(errno));
-    //exit(EXIT_FAILURE);
     evn_stream_destroy(EV_A_ stream);
     stream = NULL;
   }

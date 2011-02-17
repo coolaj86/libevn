@@ -47,6 +47,7 @@ struct evn_exception;
 typedef void (evn_server_on_listen)(EV_P_ struct evn_server* server);
 typedef void (evn_server_on_connection)(EV_P_ struct evn_server* server, struct evn_stream* stream);
 typedef void (evn_server_on_close)(EV_P_ struct evn_server* server);
+typedef void (evn_server_on_error)(EV_P_ struct evn_server* server, struct evn_exception* error);
 
 // Client Callbacks
 typedef void (evn_stream_on_connect)(EV_P_ struct evn_stream* stream);
@@ -78,6 +79,7 @@ struct evn_server {
   evn_server_on_listen* on_listen;
   evn_server_on_connection* on_connection;
   evn_server_on_close* on_close;
+  evn_server_on_error* on_error;
   struct sockaddr* socket;
   int socket_len;
   //array streams;
