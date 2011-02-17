@@ -9,18 +9,9 @@
 // if the position is equal to the length, the buffer is full
 //
 
-// If `data` is not `NULL`, use existing object
-// If `data` is `NULL`, allocate `size` bytes
 inline evn_buffer* evn_buffer_create(int size)
 {
-  /*
-  void* data = NULL;
-  if (NULL == data)
-  {
-    data = malloc(size * sizeof(size_t));
-  }
-  */
-  void* data = malloc(size * sizeof(size_t));
+  void* data = malloc(size);
   evn_buffer* buffer = malloc(sizeof(evn_buffer));
   // TODO check memory
   buffer->data = data;
@@ -41,7 +32,7 @@ void evn_buffer_destroy(evn_buffer* buffer)
 
 int evn_buffer_init(evn_buffer* buffer, int size)
 {
-  void* data = malloc(size * sizeof(size_t));
+  void* data = malloc(size);
   if (NULL == data)
   {
     return -1;
@@ -111,7 +102,7 @@ evn_bufferlist* evn_bufferlist_create(int min_block_size, int min_slice_count)
   }
   if (min_slice_count < 1)
   {
-    min_block_size = 128;
+    min_slice_count = 128;
   }
   evn_bufferlist* bufferlist = (evn_bufferlist*) calloc(1, sizeof(evn_bufferlist));
   bufferlist->block_size = min_block_size;
@@ -120,7 +111,7 @@ evn_bufferlist* evn_bufferlist_create(int min_block_size, int min_slice_count)
   bufferlist->used = 0;
   bufferlist->size = 0;
 
-  bufferlist->list = (evn_buffer*) malloc(bufferlist->length * sizeof(evn_buffer));
+  bufferlist->list = (evn_buffer*) calloc(bufferlist->length, sizeof(evn_buffer));
   bufferlist->current = bufferlist->list - 1;
   return bufferlist;
 }
@@ -165,6 +156,11 @@ int evn_bufferlist_add(evn_bufferlist* bufferlist, void* data, int size)
 
   while (total_bytes_copied != bytes_to_copy)
   {
+    if (total_bytes_copied > bytes_to_copy) {
+      fprintf(stderr, "[EVN-buffer-list] somehow wrote more data to the buffer list than told to\n");
+      exit(EXIT_FAILURE);
+    }
+
     bytes_copied = evn_buffer_add(bufferlist->current, data, size);
     if (bytes_copied != size)
     {
@@ -183,14 +179,23 @@ int evn_bufferlist_add(evn_bufferlist* bufferlist, void* data, int size)
 evn_buffer* evn_bufferlist_concat(evn_bufferlist* bufferlist)
 {
   int i;
+  int data_moved = 0;
   void* data = malloc(bufferlist->used);
+  void* temp_ptr = data;
   evn_buffer* item = bufferlist->list;
   evn_buffer* buffer;
 
-  for (i = 0; i < bufferlist->length; i += 1)
+  for (i = 0; i <= bufferlist->index; i += 1)
   {
-    memcpy(data, item->data, item->used);
+    memcpy(temp_ptr, item->data, item->used);
+    temp_ptr += item->used;
+    data_moved += item->used;
     item += 1;
+  }
+
+  if(data_moved != bufferlist->used) {
+    fprintf(stderr, "[EVN-buffer-list] bufferlist_concat did not move the proper amount of data to the new buffer\n");
+    fprintf(stderr, "\tmoved %d, and expected to move %d\n", data_moved, bufferlist->used);
   }
 
   buffer = evn_buffer_create_as(data, bufferlist->used, bufferlist->used);
@@ -204,6 +209,7 @@ void evn_bufferlist_destroy(evn_bufferlist* bufferlist)
 
   for (i = 0; i < bufferlist->length; i += 1)
   {
+    // we calloc the list in bufferlist, so if we didn't malloc anything item->data should be NULL (ok to free)
     free(item->data);
     item += 1;
   }
