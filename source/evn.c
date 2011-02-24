@@ -90,9 +90,12 @@ void evn_stream_priv_on_read(EV_P_ ev_io *w, int revents)
       // TODO put on stack char data[stream->bufferlist->used];
       if (stream->bufferlist->used)
       {
-        evn_buffer* buffer = evn_bufferlist_concat(stream->bufferlist);
-        if (stream->on_data) { stream->on_data(EV_A_ stream, buffer->data, buffer->used); }
-        free(buffer); // does not free buffer->data, that's up to the user
+        if (stream->on_data)
+        {
+          evn_buffer* buffer = evn_bufferlist_concat(stream->bufferlist);
+          stream->on_data(EV_A_ stream, buffer->data, buffer->used);
+          free(buffer); // does not free buffer->data, that's up to the user
+        }
       }
     }
     if (stream->on_end) { stream->on_end(EV_A_ stream); }
@@ -109,9 +112,12 @@ void evn_stream_priv_on_read(EV_P_ ev_io *w, int revents)
       evn_bufferlist_add(stream->bufferlist, &recv_data, length);
       return;
     }
-    data = malloc(length);
-    memcpy(data, &recv_data, length);
-    if (stream->on_data) { stream->on_data(EV_A_ stream, recv_data, length); }
+    if (stream->on_data)
+    {
+      data = malloc(length);
+      memcpy(data, &recv_data, length);
+      stream->on_data(EV_A_ stream, data, length);
+    }
   }
 }
 
@@ -138,7 +144,7 @@ void evn_server_priv_on_connection(EV_P_ ev_io *w, int revents)
         if (server->on_error)
         {
           error.error_number = errno;
-          snprintf(error.message, sizeof error.message, "[EVN] accept failed for unknown reason: %s", strerror(errno));
+          snprintf(error.message, sizeof error.message, "[EVN] accept failed for abnormal reason: %s", strerror(errno));
           server->on_error(server->EV_A, server, &error);
         }
         evn_server_destroy(EV_A, server);
@@ -324,18 +330,20 @@ bool evn_stream_write(EV_P_ struct evn_stream* stream, void* data, int size)
 {
   if (0 == stream->_priv_out_buffer->size)
   {
+    // priv_send will send the data over the socket, and add the leftover data to priv_out_buffer if it doesn't send everything
     if (true == evn_stream_priv_send(EV_A, stream, data, size))
     {
       evn_debugs("All data was sent without queueing");
       return true;
     }
     evn_debugs("Some data was queued");
-    stream->_priv_out_buffer = evn_inbuf_create(size);
   }
-
-  evn_debugs("ABQ data");
-
-  evn_inbuf_add(stream->_priv_out_buffer, data, size);
+  else
+  {
+    evn_debugs("ABQ data");
+    // we aren't ready to send yet, so add the new data to the buffer to be sent when the socket is writable
+    evn_inbuf_add(stream->_priv_out_buffer, data, size);
+  }
 
   // Ensure that we listen for EV_WRITE
   if (!(stream->io.events & EV_WRITE))
