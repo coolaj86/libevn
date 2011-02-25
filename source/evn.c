@@ -8,9 +8,15 @@
 #include "crossnet.h"
 
 #define EVN_MAX_RECV 4096
-static int evn_priv_unix_create(struct sockaddr_un* socket_un, char* sock_path);
-static int evn_priv_tcp_create(struct sockaddr_in* socket_in, int port, char* sock_path);
 
+static int evn_priv_unix_serverfd_create(struct sockaddr_un* socket_un, char* sock_path);
+static int evn_priv_tcp_serverfd_create(struct sockaddr_in* socket_in, int port, char* sock_path);
+static void evn_server_priv_on_connection(EV_P_ ev_io *w, int revents);
+
+static void evn_stream_priv_on_connect(EV_P_ ev_io *w, int revents);
+static inline void evn_stream_priv_on_activity(EV_P_ ev_io *w, int revents);
+static void evn_stream_priv_on_readable(EV_P_ ev_io *w, int revents);
+static void evn_stream_priv_on_writable(EV_P_ ev_io *w, int revents);
 static bool evn_stream_priv_send(EV_P, struct evn_stream* stream, void* data, int size);
 
 inline struct evn_stream* evn_stream_create(int fd) {
@@ -23,7 +29,7 @@ inline struct evn_stream* evn_stream_create(int fd) {
   // stream->type = 0;
   // stream->oneshot = false;
   evn_set_nonblock(fd);
-  ev_io_init(&stream->io, evn_stream_priv_on_read, fd, EV_READ);
+  ev_io_init(&stream->io, evn_stream_priv_on_activity, fd, EV_READ | EV_WRITE);
 
   evn_debugs(".");
   return stream;
@@ -47,7 +53,7 @@ bool evn_stream_destroy(EV_P_ struct evn_stream* stream)
 }
 
 // This callback is called when data is readable on the unix socket.
-void evn_stream_priv_on_read(EV_P_ ev_io *w, int revents)
+static void evn_stream_priv_on_readable(EV_P_ ev_io *w, int revents)
 {
   void* data;
   struct evn_exception error;
@@ -73,17 +79,17 @@ void evn_stream_priv_on_read(EV_P_ ev_io *w, int revents)
     evn_debugs("received FIN");
     // We no longer have data to read but we may still have data to write
     stream->ready_state = evn_WRITE_ONLY;
-    if (stream->io.events & EV_WRITE)
-    {
-      int fd = stream->io.fd;
-      ev_io_stop(EV_A_ &stream->io);
-      ev_io_set(&stream->io, fd, EV_WRITE);
-      ev_io_start(EV_A_ &stream->io);
-    }
-    else
-    {
-      ev_io_stop(EV_A_ &stream->io);
-    }
+
+    // store the file descriptor to make sure we don't lose it when we stop the event.
+    int fd = stream->io.fd;
+    // bitwise and the events we are looking for with the bitwise not of EV_READ to remove it.
+    int new_events = stream->io.events & ~EV_READ;
+
+    // stop the event on the loop, change the settings, and restart it
+    ev_io_stop(EV_A_ &stream->io);
+    ev_io_set(&stream->io, fd, new_events);
+    ev_io_start(EV_A_ &stream->io);
+
     if (stream->oneshot)
     {
       evn_debugs("oneshot shot");
@@ -121,7 +127,7 @@ void evn_stream_priv_on_read(EV_P_ ev_io *w, int revents)
   }
 }
 
-void evn_server_priv_on_connection(EV_P_ ev_io *w, int revents)
+static void evn_server_priv_on_connection(EV_P_ ev_io *w, int revents)
 {
   evn_debugs("new connection - EV_READ - server->io.fd has become readable");
 
@@ -177,7 +183,7 @@ int evn_set_nonblock(int fd)
   return fcntl(fd, F_SETFL, flags);
 }
 
-static int evn_priv_tcp_create(struct sockaddr_in* socket_in, int port, char* address)
+static int evn_priv_tcp_serverfd_create(struct sockaddr_in* socket_in, int port, char* address)
 {
   int fd;
 
@@ -204,7 +210,7 @@ static int evn_priv_tcp_create(struct sockaddr_in* socket_in, int port, char* ad
   return fd;
 }
 
-static int evn_priv_unix_create(struct sockaddr_un* socket_un, char* sock_path)
+static int evn_priv_unix_serverfd_create(struct sockaddr_un* socket_un, char* sock_path)
 {
   int fd;
 
@@ -267,14 +273,14 @@ int evn_server_listen(struct evn_server* server, int port, char* address)
     server->socket = malloc(sizeof(struct sockaddr_un));
     sock_unix = (struct sockaddr_un*) server->socket;
     evn_debug("%s\n", address);
-    fd = evn_priv_unix_create(sock_unix, address);
+    fd = evn_priv_unix_serverfd_create(sock_unix, address);
     server->socket_len = sizeof(sock_unix->sun_family) + strlen(sock_unix->sun_path) + 1;
   }
   else
   {
     server->socket = malloc(sizeof(struct sockaddr_in));
     sock_inet = (struct sockaddr_in*) server->socket;
-    fd = evn_priv_tcp_create(sock_inet, port, address);
+    fd = evn_priv_tcp_serverfd_create(sock_inet, port, address);
     server->socket_len = sizeof(struct sockaddr);
   }
 
@@ -348,9 +354,12 @@ bool evn_stream_write(EV_P_ struct evn_stream* stream, void* data, int size)
   // Ensure that we listen for EV_WRITE
   if (!(stream->io.events & EV_WRITE))
   {
+    // store the file descriptor to make sure we don't lose it when we stop the event.
     int fd = stream->io.fd;
+    // bitwise or the events we are looking for with EV_WRITE to make sure EV_WRITE is inlcuded.
+    int new_events = stream->io.events | EV_WRITE;
     ev_io_stop(EV_A_ &stream->io);
-    ev_io_set(&stream->io, fd, EV_READ | EV_WRITE);
+    ev_io_set(&stream->io, fd, new_events);
   }
   ev_io_start(EV_A_ &stream->io);
 
@@ -448,13 +457,19 @@ static void evn_stream_priv_on_writable(EV_P_ ev_io *w, int revents)
   // If the buffer is finally empty, send the `drain` event
   if (0 == stream->_priv_out_buffer->size)
   {
+    // store the file descriptor to make sure we don't lose it when we stop the event.
     int fd = stream->io.fd;
+    // bitwise and the events we are looking for with the bitwise not of EV_WRITE to remove it.
+    int new_events = stream->io.events & ~EV_WRITE;
+
+    // stop the event on the loop, change the settings, and restart it
     ev_io_stop(EV_A_ &stream->io);
-    ev_io_set(&stream->io, fd, EV_READ);
+    ev_io_set(&stream->io, fd, new_events);
     ev_io_start(EV_A_ &stream->io);
+
     evn_debugs("pre-drain");
     if (stream->on_drain) { stream->on_drain(EV_A_ stream); }
-    // and the
+
     return;
   }
   evn_debugs("post-null");
@@ -465,7 +480,7 @@ static inline void evn_stream_priv_on_activity(EV_P_ ev_io *w, int revents)
   evn_debugs("Stream Activity");
   if (revents & EV_READ)
   {
-    // evn_stream_read_priv_cb
+    evn_stream_priv_on_readable(EV_A, w, revents);
   }
   else if (revents & EV_WRITE)
   {
@@ -488,7 +503,7 @@ static void evn_stream_priv_on_connect(EV_P_ ev_io *w, int revents)
 
   int fd = stream->io.fd;
   ev_io_stop(EV_A_ &stream->io);
-  ev_io_init(&stream->io, evn_stream_priv_on_activity, fd, EV_WRITE);
+  ev_io_init(&stream->io, evn_stream_priv_on_activity, fd, EV_READ | EV_WRITE);
   ev_io_start(EV_A_ &stream->io);
   //ev_cb_set(&stream->io, evn_stream_priv_on_activity);
 
