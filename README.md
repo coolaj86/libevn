@@ -25,6 +25,8 @@ net.Stream
   * `void evn_stream_priv_on_read(EV_P_ ev_io *w, int revents)`
   * `bool evn_stream_write(EV_P_ struct evn_stream* stream, void* data, int size)`
   * `bool evn_stream_end(EV_P_ struct evn_stream* stream)` - closes (and frees) the stream
+  * `void evn_stream_pause(EV_P_ struct evn_stream* stream)` // TODO
+  * `void evn_stream_resume(EV_P_ struct evn_stream* stream)` // TODO
 
 **Event Callbacks**
 
