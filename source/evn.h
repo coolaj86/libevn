@@ -76,7 +76,7 @@ struct evn_exception {
 struct evn_server {
   ev_io io;
   EV_P;
-  evn_server_on_listen* on_listen;
+  //evn_server_on_listen* on_listen;    // not in the node API
   evn_server_on_connection* on_connection;
   evn_server_on_close* on_close;
   evn_server_on_error* on_error;

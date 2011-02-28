@@ -59,6 +59,10 @@ int evn_server_listen(struct evn_server* server, int port, char* address) {
     server->socket_len = sizeof(struct sockaddr);
   }
 
+  // put this up here so that if we need to destroy the server on error, the fd will be available
+  // in io so we can close it.
+  ev_io_init(&server->io, evn_server_priv_on_connection, fd, EV_READ);
+
   if (-1 == fd)
   {
     if (server->on_error)
@@ -96,7 +100,6 @@ int evn_server_listen(struct evn_server* server, int port, char* address) {
     return -1;
   }
 
-  ev_io_init(&server->io, evn_server_priv_on_connection, fd, EV_READ);
   ev_io_start(server->EV_A_ &server->io);
 
   return 0;
@@ -186,6 +189,7 @@ static void evn_server_priv_on_connection(EV_P_ ev_io *w, int revents) {
     }
     stream = evn_stream_create(stream_fd);
     stream->server = server;
+    stream->ready_state = evn_OPEN;
     if (server->on_connection) { server->on_connection(EV_A_ server, stream); }
     if (stream->oneshot)
     {
@@ -200,6 +204,7 @@ static void evn_server_priv_on_connection(EV_P_ ev_io *w, int revents) {
 }
 
 int evn_server_close(EV_P_ struct evn_server* server) {
+  close(server->io.fd);
   ev_io_stop(server->EV_A_ &server->io);
   if (server->on_close) { server->on_close(server->EV_A_ server); }
   free(server->socket);
@@ -253,6 +258,8 @@ struct evn_stream* evn_create_connection_tcp_stream(EV_P_ int port, char* addres
   stream->socket = malloc(sizeof(struct sockaddr_in));
   socket_in = (struct sockaddr_in*) stream->socket;
 
+  stream->ready_state = evn_OPENING;
+
   socket_in->sin_family = AF_INET;
   socket_in->sin_addr.s_addr = inet_addr(address);
   socket_in->sin_port = htons(port);
@@ -286,6 +293,8 @@ struct evn_stream* evn_create_connection_unix_stream(EV_P_ char* sock_path) {
   stream->socket = malloc(sizeof(struct sockaddr_un));
   sock = (struct sockaddr_un*) stream->socket;
 
+  stream->ready_state = evn_OPENING;
+
   // initialize the connect callback so that it starts the stdin asap
   ev_io_stop(EV_A_ &stream->io);
   ev_io_init(&stream->io, evn_stream_priv_on_connect, stream_fd, EV_WRITE);
@@ -313,6 +322,8 @@ static void evn_stream_priv_on_connect(EV_P_ ev_io *w, int revents) {
   //ev_cb_set (ev_TYPE *watcher, callback)
   //ev_io_set (&w, STDIN_FILENO, EV_READ);
 
+  stream->ready_state = evn_OPEN;
+
   int fd = stream->io.fd;
   ev_io_stop(EV_A_ &stream->io);
   ev_io_init(&stream->io, evn_stream_priv_on_activity, fd, EV_READ | EV_WRITE);
@@ -323,6 +334,19 @@ static void evn_stream_priv_on_connect(EV_P_ ev_io *w, int revents) {
 }
 
 bool evn_stream_write(EV_P_ struct evn_stream* stream, void* data, int size) {
+
+  if (evn_READ_ONLY == stream->ready_state)
+  {
+    if (stream->on_error)
+    {
+      struct evn_exception error;
+      error.error_number = -1;
+      snprintf(error.message, sizeof error.message, "[EVN] trying to write to a read only stream");
+      stream->on_error(EV_A, stream, &error);
+    }
+    return false;
+  }
+
   if (0 == stream->_priv_out_buffer->size)
   {
     // priv_send will send the data over the socket, and add the leftover data to priv_out_buffer if it doesn't send everything
@@ -387,7 +411,7 @@ static void evn_stream_priv_on_readable(EV_P_ ev_io *w, int revents) {
   {
     if (stream->on_error) {
       error.error_number = errno;
-      snprintf(error.message, sizeof error.message, "read failed, now destroying stream: %s", strerror(errno));
+      snprintf(error.message, sizeof error.message, "[EVN] read failed, now destroying stream: %s", strerror(errno));
       stream->on_error(EV_A, stream, &error);
     }
     evn_stream_destroy(EV_A, stream);
@@ -396,18 +420,6 @@ static void evn_stream_priv_on_readable(EV_P_ ev_io *w, int revents) {
   else if (0 == length)
   {
     evn_debugs("received FIN");
-    // We no longer have data to read but we may still have data to write
-    stream->ready_state = evn_WRITE_ONLY;
-
-    // store the file descriptor to make sure we don't lose it when we stop the event.
-    int fd = stream->io.fd;
-    // bitwise and the events we are looking for with the bitwise not of EV_READ to remove it.
-    int new_events = stream->io.events & ~EV_READ;
-
-    // stop the event on the loop, change the settings, and restart it
-    ev_io_stop(EV_A_ &stream->io);
-    ev_io_set(&stream->io, fd, new_events);
-    ev_io_start(EV_A_ &stream->io);
 
     if (stream->oneshot)
     {
@@ -424,7 +436,28 @@ static void evn_stream_priv_on_readable(EV_P_ ev_io *w, int revents) {
       }
     }
     if (stream->on_end) { stream->on_end(EV_A_ stream); }
-    // evn_stream_destroy(EV_A_ stream);
+
+    // if we've already sent to FIN packet, nothing left but to close the stream entirely
+    if (evn_READ_ONLY == stream->ready_state)
+    {
+      stream->ready_state = evn_CLOSED;
+      evn_stream_destroy(EV_A_ stream);
+    }
+    // otherwise leave the socket open so we can write to it, but stop listening for READ events.
+    else
+    {
+      stream->ready_state = evn_WRITE_ONLY;
+
+      // store the file descriptor to make sure we don't lose it when we stop the event.
+      int fd = stream->io.fd;
+      // bitwise and the events we are looking for with the bitwise not of EV_READ to remove it.
+      int new_events = stream->io.events & ~EV_READ;
+
+      // stop the event on the loop, change the settings, and restart it
+      ev_io_stop(EV_A_ &stream->io);
+      ev_io_set(&stream->io, fd, new_events);
+      ev_io_start(EV_A_ &stream->io);
+    }
   }
   else if (length > 0)
   {
@@ -490,7 +523,7 @@ static bool evn_stream_priv_send(EV_P, struct evn_stream* stream, void* data, in
     {
       if (stream->on_error) {
         error.error_number = errno;
-        snprintf(error.message, sizeof error.message, "send failed, now destroying stream: %s", strerror(errno));
+        snprintf(error.message, sizeof error.message, "[EVN] send failed, now destroying stream: %s", strerror(errno));
         stream->on_error(EV_A, stream, &error);
       }
       evn_stream_destroy(EV_A, stream);
@@ -513,7 +546,7 @@ static bool evn_stream_priv_send(EV_P, struct evn_stream* stream, void* data, in
       {
         if (stream->on_error) {
           error.error_number = errno;
-          snprintf(error.message, sizeof error.message, "send failed, now destroying stream: %s", strerror(errno));
+          snprintf(error.message, sizeof error.message, "[EVN] send failed, now destroying stream: %s", strerror(errno));
           stream->on_error(EV_A, stream, &error);
         }
         evn_stream_destroy(EV_A, stream);
@@ -536,7 +569,7 @@ static bool evn_stream_priv_send(EV_P, struct evn_stream* stream, void* data, in
     {
       if (stream->on_error) {
         error.error_number = errno;
-        snprintf(error.message, sizeof error.message, "send failed, now destroying stream: %s", strerror(errno));
+        snprintf(error.message, sizeof error.message, "[EVN] send failed, now destroying stream: %s", strerror(errno));
         stream->on_error(EV_A, stream, &error);
       }
       evn_stream_destroy(EV_A, stream);
@@ -554,7 +587,18 @@ static bool evn_stream_priv_send(EV_P, struct evn_stream* stream, void* data, in
 }
 
 bool evn_stream_end(EV_P_ struct evn_stream* stream) {
-  return evn_stream_destroy(EV_A_ stream);
+
+  if (evn_WRITE_ONLY == stream->ready_state)
+  {
+    stream->ready_state = evn_CLOSED;
+    evn_stream_destroy(EV_A_ stream);
+    return true;
+  }
+
+  stream->ready_state = evn_READ_ONLY;
+  // this command closes the socket for writing and sends the FIN packet
+  shutdown(stream->io.fd, SHUT_WR);
+  return false;
 }
 
 bool evn_stream_destroy(EV_P_ struct evn_stream* stream) {
@@ -563,6 +607,7 @@ bool evn_stream_destroy(EV_P_ struct evn_stream* stream) {
   // TODO delay freeing of server until streams have closed
   // or link loop directly to stream?
   result = close(stream->io.fd) ? true : false;
+  result = (evn_CLOSED != stream->ready_state) ? true : result;
   ev_io_stop(EV_A_ &stream->io);
   stream->ready_state = evn_CLOSED;
   if (stream->on_close) { stream->on_close(EV_A_ stream, result); }
