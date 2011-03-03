@@ -268,10 +268,12 @@ struct evn_stream* evn_create_connection_tcp_stream(EV_P_ int port, char* addres
 
   stream->ready_state = evn_OPENING;
 
+  ev_io_stop(EV_A_ &stream->io);
+  ev_io_init(&stream->io, evn_stream_priv_on_connect, stream_fd, EV_WRITE);
+
   socket_in->sin_family = AF_INET;
   socket_in->sin_addr.s_addr = inet_addr(address);
   socket_in->sin_port = htons(port);
-
   stream->socket_len = sizeof(struct sockaddr);
 
   if (-1 == connect(stream_fd, (struct sockaddr*) stream->socket, stream->socket_len)) {
@@ -282,6 +284,10 @@ struct evn_stream* evn_create_connection_tcp_stream(EV_P_ int port, char* addres
     stream = NULL;
   }
 
+  if (NULL != stream)
+  {
+    ev_io_start(EV_A_ &stream->io);
+  }
   return stream;
 }
 
@@ -318,7 +324,10 @@ struct evn_stream* evn_create_connection_unix_stream(EV_P_ char* sock_path) {
     stream = NULL;
   }
 
-  ev_io_start(EV_A_ &stream->io);
+  if (NULL != stream)
+  {
+    ev_io_start(EV_A_ &stream->io);
+  }
   return stream;
 }
 
