@@ -31,6 +31,7 @@ int evn_set_nonblock(int fd) {
 struct evn_server* evn_server_create(EV_P_ evn_server_on_connection* on_connection) {
   struct evn_server* server = calloc(1, sizeof(struct evn_server));
   server->EV_A = EV_A;
+  server->socket = NULL;
   server->on_connection = on_connection;
   return server;
 }
@@ -191,7 +192,7 @@ static void evn_server_priv_on_connection(EV_P_ ev_io *w, int revents) {
     stream->server = server;
     stream->ready_state = evn_OPEN;
     if (server->on_connection) { server->on_connection(EV_A_ server, stream); }
-    if (stream->oneshot)
+    if (true == stream->oneshot)
     {
       // each buffer chunk should be at least 4096 and we'll start with 128 chunks
       // the size will grow if the actual data received is larger
@@ -206,8 +207,14 @@ static void evn_server_priv_on_connection(EV_P_ ev_io *w, int revents) {
 int evn_server_close(EV_P_ struct evn_server* server) {
   close(server->io.fd);
   ev_io_stop(server->EV_A_ &server->io);
+
   if (server->on_close) { server->on_close(server->EV_A_ server); }
-  free(server->socket);
+
+  if (NULL != server->socket)
+  {
+    free(server->socket);
+    server->socket = NULL;
+  }
   free(server);
   return 0;
 }
@@ -222,11 +229,12 @@ inline struct evn_stream* evn_stream_create(int fd) {
   evn_debug("evn_stream_create");
   struct evn_stream* stream;
 
-  //stream = realloc(NULL, sizeof(struct evn_stream));
   stream = calloc(1, sizeof(struct evn_stream));
   stream->_priv_out_buffer = evn_inbuf_create(EVN_MAX_RECV);
-  // stream->type = 0;
-  // stream->oneshot = false;
+  stream->oneshot = false;
+  stream->bufferlist = NULL;
+  stream->socket = NULL;
+  stream->server = NULL;
   evn_set_nonblock(fd);
   ev_io_init(&stream->io, evn_stream_priv_on_activity, fd, EV_READ | EV_WRITE);
 
@@ -295,10 +303,8 @@ struct evn_stream* evn_create_connection_unix_stream(EV_P_ char* sock_path) {
 
   stream->ready_state = evn_OPENING;
 
-  // initialize the connect callback so that it starts the stdin asap
   ev_io_stop(EV_A_ &stream->io);
   ev_io_init(&stream->io, evn_stream_priv_on_connect, stream_fd, EV_WRITE);
-  ev_io_start(EV_A_ &stream->io);
 
   sock->sun_family = AF_UNIX;
   strcpy(sock->sun_path, sock_path);
@@ -312,6 +318,7 @@ struct evn_stream* evn_create_connection_unix_stream(EV_P_ char* sock_path) {
     stream = NULL;
   }
 
+  ev_io_start(EV_A_ &stream->io);
   return stream;
 }
 
@@ -331,6 +338,12 @@ static void evn_stream_priv_on_connect(EV_P_ ev_io *w, int revents) {
   //ev_cb_set(&stream->io, evn_stream_priv_on_activity);
 
   if (stream->on_connect) { stream->on_connect(EV_A_ stream); }
+  if (true == stream->oneshot)
+  {
+    // each buffer chunk should be at least 4096 and we'll start with 128 chunks
+    // the size will grow if the actual data received is larger
+    stream->bufferlist = evn_bufferlist_create(4096, 128);
+  }
 }
 
 bool evn_stream_write(EV_P_ struct evn_stream* stream, void* data, int size) {
@@ -610,9 +623,36 @@ bool evn_stream_destroy(EV_P_ struct evn_stream* stream) {
   result = (evn_CLOSED != stream->ready_state) ? true : result;
   ev_io_stop(EV_A_ &stream->io);
   stream->ready_state = evn_CLOSED;
+
   if (stream->on_close) { stream->on_close(EV_A_ stream, result); }
-  evn_inbuf_destroy(stream->_priv_out_buffer);
-  free(stream->socket);
+
+  if (NULL != stream->_priv_out_buffer)
+  {
+    evn_inbuf_destroy(stream->_priv_out_buffer);
+    stream->_priv_out_buffer = NULL;
+  }
+  else
+  {
+    fprintf(stderr, "[EVN] out buffer is null in stream about to be destroyed\n\tPossible double destroy in progress\n");
+  }
+  if (NULL != stream->bufferlist)
+  {
+    evn_bufferlist_destroy(stream->bufferlist);
+    stream->bufferlist = NULL;
+  }
+  else if (true == stream->oneshot)
+  {
+    fprintf(stderr, "[EVN] bufferlist is null in stream about to be destroyed (with one shot = true)\n\tPossible double destroy in progress\n");
+  }
+  if (NULL != stream->socket)
+  {
+    free(stream->socket);
+    stream->socket = NULL;
+  }
+  else if (NULL == stream->server)
+  {
+    fprintf(stderr, "[EVN] socket is null in stream about to be destroyed (client side)\n\tPossible double destroy in progress\n");
+  }
   free(stream);
 
   return result;
