@@ -76,7 +76,7 @@ struct evn_exception {
 struct evn_server {
   ev_io io;
   EV_P;
-  evn_server_on_listen* on_listen;
+  //evn_server_on_listen* on_listen;    // not in the node API
   evn_server_on_connection* on_connection;
   evn_server_on_close* on_close;
   evn_server_on_error* on_error;
@@ -113,15 +113,13 @@ int evn_set_nonblock(int fd);
 
 struct evn_server* evn_server_create(EV_P_ evn_server_on_connection* on_connection);
 int evn_server_listen(struct evn_server* server, int port, char* address);
-void evn_server_priv_on_connection(EV_P_ ev_io *w, int revents);
 int evn_server_close(EV_P_ struct evn_server* server);
 int evn_server_destroy(EV_P_ struct evn_server* server);
 
-struct evn_stream* evn_stream_create(int fd);
+inline struct evn_stream* evn_stream_create(int fd);
 inline struct evn_stream* evn_create_connection(EV_P_ int port, char* address);
 struct evn_stream* evn_create_connection_unix_stream(EV_P_ char* sock_path);
 struct evn_stream* evn_create_connection_tcp_stream(EV_P_ int port, char* address);
-void evn_stream_priv_on_read(EV_P_ ev_io *w, int revents);
 bool evn_stream_write(EV_P_ struct evn_stream* stream, void* data, int size);
 bool evn_stream_end(EV_P_ struct evn_stream* stream);
 bool evn_stream_destroy(EV_P_ struct evn_stream* stream);

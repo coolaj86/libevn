@@ -28,6 +28,10 @@ static void on_stream_close(EV_P_ struct evn_stream* stream, bool had_error)
 {
   struct evn_server* server = stream->server;
   puts("\t[Server] On (Stream) Close");
+  if (true == had_error)
+  {
+    fprintf(stderr, "\t[Server] Stream Close had an error");
+  }
 
   evn_server_close(EV_A_ server);
 }
@@ -42,10 +46,16 @@ static void on_connection(EV_P_ struct evn_server* server, struct evn_stream* st
   stream->oneshot = true;
 }
 
-// Listen
-static void on_listen(EV_P_ struct evn_server* server)
+//// Listen
+//static void on_listen(EV_P_ struct evn_server* server)
+//{
+  //puts("[Server] On Listen");
+//}
+
+// Close
+static void on_server_close(EV_P, struct evn_server* server)
 {
-  puts("[Server] On Listen");
+  puts("[Server] on server close");
 }
 
 //
@@ -63,7 +73,8 @@ int main (int argc, char* argv[])
   unlink(socket_address);
 
   server = evn_server_create(EV_A_ on_connection);
-  server->on_listen = on_listen;
+  //server->on_listen = on_listen;
+  server->on_close = on_server_close;
   printf("socket_address: %s\n", socket_address);
   evn_server_listen(server, 0, socket_address);
 
