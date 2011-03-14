@@ -3,7 +3,7 @@ libevnet - Evented Networking in C
 
 `libevnet` is essentially the `net` module of Node.JS (v0.2.6), implemented in `C`
 
-Status: working, but in very early development
+Status: Client has undergone some testing, perhaps Beta quality. Server is still Alpha quality.
 
 Build & Install
 ====
@@ -59,4 +59,3 @@ TODO
 
   * Provide reference implementations in JavaScript
   * More tests and usage
-  * Drop unnecessary `EV_A`s (the stream and server are created with the loop as a member.)
