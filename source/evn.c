@@ -15,6 +15,7 @@ static void evn_server_priv_on_connection(EV_P_ ev_io *w, int revents);
 
 static void evn_stream_priv_on_connect(EV_P_ ev_io *w, int revents);
 static inline void evn_stream_priv_on_activity(EV_P_ ev_io *w, int revents);
+static void evn_stream_timer_priv_cb(EV_P, ev_timer* w, int revents);
 static void evn_stream_priv_on_readable(EV_P_ ev_io *w, int revents);
 static void evn_stream_priv_on_writable(EV_P_ ev_io *w, int revents);
 static bool evn_stream_priv_send(EV_P, struct evn_stream* stream, void* data, int size);
@@ -235,6 +236,8 @@ inline struct evn_stream* evn_stream_create(int fd) {
   stream->bufferlist = NULL;
   stream->socket = NULL;
   stream->server = NULL;
+  stream->timer.stream = stream;
+  stream->timer.timeout = 0;
   evn_set_nonblock(fd);
   ev_io_init(&stream->io, evn_stream_priv_on_activity, fd, EV_READ | EV_WRITE);
 
@@ -353,9 +356,59 @@ static void evn_stream_priv_on_connect(EV_P_ ev_io *w, int revents) {
     // the size will grow if the actual data received is larger
     stream->bufferlist = evn_bufferlist_create(4096, 128);
   }
+
+  stream->timer.last_activity = ev_now(EV_A);
+  if ( (false == stream->timer.active) && (0 != stream->timer.timeout) )
+  {
+    evn_stream_timer_priv_cb(EV_A, &(stream->timer.timer), EV_TIMEOUT);
+    evn_debugs("reactivated expired timer");
+  }
 }
 
-bool evn_stream_write(EV_P_ struct evn_stream* stream, void* data, int size) {
+int evn_stream_get_timeout(EV_P, struct evn_stream* stream) {
+  return (int)(stream->timer.timeout * 1000);
+}
+
+void evn_stream_set_timeout(EV_P, struct evn_stream* stream, int timeout) {
+
+  if(0 == timeout)
+  {
+    ev_timer_stop (EV_A, &(stream->timer.timer));
+    stream->timer.active = false;
+    return;
+  }
+
+  stream->timer.timeout = (ev_tstamp)timeout / 1000;
+  stream->timer.last_activity = ev_now(loop);
+
+  ev_init (&(stream->timer.timer), evn_stream_timer_priv_cb);
+  evn_stream_timer_priv_cb(EV_A, &(stream->timer.timer), EV_TIMEOUT);
+}
+
+static void evn_stream_timer_priv_cb(EV_P, ev_timer* w, int revents) {
+  ev_tstamp timeout;
+  ev_tstamp now = ev_now(EV_A);
+  struct evn_stream_timer* stream_timer = (struct evn_stream_timer*) w;
+  struct evn_stream* stream = stream_timer->stream;
+
+  timeout = stream_timer->last_activity + stream_timer->timeout;
+
+  if (timeout < now)
+  {
+    evn_debug(" stream timed out. Current time = %f, Last avtivity = %f, Timeout = %f\n", now, stream_timer->last_activity, stream_timer->timeout);
+    if (stream->on_timeout) { stream->on_timeout(EV_A, stream); }
+    ev_timer_stop (EV_A, &(stream->timer.timer));
+    stream_timer->active = false;
+  }
+  else
+  {
+    w->repeat = timeout-now;
+    ev_timer_again(EV_A, w);
+    stream_timer->active = true;
+  }
+}
+
+bool evn_stream_write(EV_P, struct evn_stream* stream, void* data, int size) {
 
   if (evn_READ_ONLY == stream->ready_state)
   {
@@ -367,6 +420,14 @@ bool evn_stream_write(EV_P_ struct evn_stream* stream, void* data, int size) {
       stream->on_error(EV_A, stream, &error);
     }
     return false;
+  }
+
+  stream->timer.last_activity = ev_now(EV_A);
+  evn_debug("user write reset timeout at time %f\n", stream->timer.last_activity);
+  if ( (false == stream->timer.active) && (0 != stream->timer.timeout) )
+  {
+    evn_stream_timer_priv_cb(EV_A, &(stream->timer.timer), EV_TIMEOUT);
+    evn_debugs("reactivated expired timer");
   }
 
   if (0 == stream->_priv_out_buffer->size)
@@ -402,7 +463,17 @@ bool evn_stream_write(EV_P_ struct evn_stream* stream, void* data, int size) {
 }
 
 static inline void evn_stream_priv_on_activity(EV_P_ ev_io *w, int revents) {
+  struct evn_stream* stream = (struct evn_stream*) w;
   evn_debugs("Stream Activity");
+
+  stream->timer.last_activity = ev_now(EV_A);
+  evn_debug("socket file activity reset timeout at time %f\n", stream->timer.last_activity);
+  if ( (false == stream->timer.active) && (0 != stream->timer.timeout) )
+  {
+    evn_stream_timer_priv_cb(EV_A, &(stream->timer.timer), EV_TIMEOUT);
+    evn_debugs("reactivated expired timer");
+  }
+
   if (revents & EV_READ)
   {
     evn_stream_priv_on_readable(EV_A, w, revents);
@@ -633,6 +704,7 @@ bool evn_stream_destroy(EV_P_ struct evn_stream* stream) {
   ev_io_stop(EV_A_ &stream->io);
   stream->ready_state = evn_CLOSED;
 
+  ev_timer_stop (EV_A, &(stream->timer.timer));
   if (stream->on_close) { stream->on_close(EV_A_ stream, result); }
 
   if (NULL != stream->_priv_out_buffer)

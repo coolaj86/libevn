@@ -30,10 +30,16 @@ static void on_stream_close(EV_P_ struct evn_stream* stream, bool had_error)
   puts("\t[Server] On (Stream) Close");
   if (true == had_error)
   {
-    fprintf(stderr, "\t[Server] Stream Close had an error");
+    fprintf(stderr, "\t[Server] Stream Close had an error\n");
   }
 
   evn_server_close(EV_A_ server);
+}
+
+static void on_stream_timeout(EV_P, struct evn_stream* stream)
+{
+  puts("connection timed out, destroying stream");
+  evn_stream_destroy(EV_A, stream);
 }
 
 // Connection
@@ -43,7 +49,10 @@ static void on_connection(EV_P_ struct evn_server* server, struct evn_stream* st
   stream->on_data = on_data;
   stream->on_end = on_stream_end;
   stream->on_close = on_stream_close;
+  stream->on_timeout = on_stream_timeout;
   stream->oneshot = true;
+
+  evn_stream_set_timeout(EV_A, stream, 4000);
 }
 
 //// Listen

@@ -73,6 +73,16 @@ struct evn_exception {
   char message[256];
 };
 
+// we need a seperate struct for the timer so we can dereference the pointer
+// the the ev_timer as something that can get us back the the stream pointer
+struct evn_stream_timer {
+  ev_timer timer;
+  struct evn_stream* stream;
+  ev_tstamp last_activity;
+  ev_tstamp timeout;
+  bool active;
+};
+
 struct evn_server {
   ev_io io;
   EV_P;
@@ -106,6 +116,7 @@ struct evn_stream {
   EV_P;
   char type;
   void* send_data;
+  struct evn_stream_timer timer;
 };
 
 
@@ -120,6 +131,8 @@ inline struct evn_stream* evn_stream_create(int fd);
 inline struct evn_stream* evn_create_connection(EV_P_ int port, char* address);
 struct evn_stream* evn_create_connection_unix_stream(EV_P_ char* sock_path);
 struct evn_stream* evn_create_connection_tcp_stream(EV_P_ int port, char* address);
+void evn_stream_set_timeout(EV_P, struct evn_stream* stream, int timeout);
+int evn_stream_get_timeout(EV_P, struct evn_stream* stream);
 bool evn_stream_write(EV_P_ struct evn_stream* stream, void* data, int size);
 bool evn_stream_end(EV_P_ struct evn_stream* stream);
 bool evn_stream_destroy(EV_P_ struct evn_stream* stream);
