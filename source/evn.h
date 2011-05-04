@@ -127,7 +127,7 @@ int evn_server_listen(struct evn_server* server, int port, char* address);
 int evn_server_close(EV_P_ struct evn_server* server);
 int evn_server_destroy(EV_P_ struct evn_server* server);
 
-inline struct evn_stream* evn_stream_create(int fd);
+inline struct evn_stream* evn_stream_create(EV_P, int fd);
 inline struct evn_stream* evn_create_connection(EV_P_ int port, char* address);
 struct evn_stream* evn_create_connection_unix_stream(EV_P_ char* sock_path);
 struct evn_stream* evn_create_connection_tcp_stream(EV_P_ int port, char* address);
