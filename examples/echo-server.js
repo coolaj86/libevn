@@ -3,12 +3,26 @@
   "use strict"
 
   var net = require("net"),
+    fs = require('fs'),
     server,
     interval,
+    socket_addr,
     timed_out = false;
 
   function on_connection(stream) {
+    var out_file = -1;
+
     console.log("[Server] On Connection. [" + server.connections + "]");
+
+    stream.pause();
+    // Write stream to file once it is ready
+    fs.open('./js-server-received.dat', 'w', function(err, fd) {
+      if (err) {
+        throw err;
+      }
+      out_file = fd;
+      stream.resume();
+    });
 
     stream.setTimeout(5000);
     // stream.setNoDelay();
@@ -17,7 +31,7 @@
     console.log("\t[Stream] readyState: " + stream.readyState);
 
     stream.on('connect', function () {
-      timeout = false;
+      timed_out = false;
       console.log("\t[Stream] On Connect");
     });
 
@@ -26,12 +40,21 @@
     });
 
     stream.on('data', function (data) {
-      timeout = false;
+      timed_out = false;
       console.log("\t[Stream] On Data");
       stream.write(data);
+
+      stream.pause();
+      fs.write(out_file, data, 0, data.length, null, function (err, written) {
+        if (err) {
+          throw err;
+        }
+        stream.resume();
+      });
     });
 
     stream.on('end', function () {
+      fs.close(out_file);
       console.log("\t[Stream] On End (received FIN).\n\t\treadyState: " + stream.readyState);
     });
 
@@ -46,12 +69,11 @@
     });
 
     stream.on('error', function (err) {
-      // not used in this example
-      console.log("\t[Stream] On Error" + err.message);
+      console.log("\t[Stream] On Error: " + err.message);
     });
 
     stream.on('close', function (had_error) {
-      console.log("\t[Stream] On Close (file descriptor closed). State: " + stream.readyState);
+      console.log("\t[Stream] On Close (file descriptor closed).\n\t\treadyState: " + stream.readyState);
       // 'closed', 'open', 'opening', 'readOnly', or 'writeOnly'
       if ('open' === stream.readyState) {
         stream.write("cause error");
@@ -72,13 +94,18 @@
   }
 
   server = net.createServer(on_connection);
-  //net.on('connection', on_connection);
   server.on('close', on_close);
   server.maxConnections = 100;
-  server.listen('/tmp/libevnet-echo.' + process.getuid() + '.sock');
-  //server.listen(3355, 'localhost');
-  //server.listenFD(some_fd);
-  console.log("[Server] listening");
-  
-  interval = setInterval(check_for_timeout, 5000);
+
+  socket_addr = '/tmp/libevnet-echo.' + process.getuid() + '.sock';
+  if (isNaN(socket_addr)) {
+    server.listen(socket_addr);
+    console.log("[Server] listening on " + socket_addr);
+  }
+  else if (socket_addr < 65536) {
+    server.listen(socket_addr, 'localhost');
+    console.log("[Server] listening on port" + socket_addr);
+  }
+
+  //interval = setInterval(check_for_timeout, 5000);
 }());

@@ -564,7 +564,7 @@ static void evn_stream_priv_on_readable(EV_P_ ev_io *w, int revents) {
   {
     if (stream->oneshot)
     {
-      evn_debugs("adding to buffer");
+      evn_debug("adding to %d bytes to the buffer (current size = %d)\n", length, stream->bufferlist->size);
       // if (stream->on_progress) { stream->on_progress(EV_A_ stream, data, length); }
       // if time - stream->started_at > stream->max_wait; stream->timeout();
       // if buffer->used > stream->max_size; stream->timeout();
@@ -573,6 +573,7 @@ static void evn_stream_priv_on_readable(EV_P_ ev_io *w, int revents) {
     }
     if (stream->on_data)
     {
+      evn_debug("read %d from the socket\n", length);
       data = malloc(length);
       memcpy(data, &recv_data, length);
       stream->on_data(EV_A_ stream, data, length);
@@ -623,7 +624,7 @@ static bool evn_stream_priv_send(EV_P, struct evn_stream* stream, void* data, in
   evn_debugs("priv_send");
   if (0 != buf_size)
   {
-    evn_debugs("has buffer with data");
+    evn_debug("has buffer with %d bytes of data\n", buf_size);
     sent = send(stream->io.fd, buf->bottom, buf->size, MSG_DONTWAIT | EVN_NOSIGNAL);
     if (sent < 0)
     {
@@ -639,7 +640,7 @@ static bool evn_stream_priv_send(EV_P, struct evn_stream* stream, void* data, in
 
     if (sent != buf_size)
     {
-      evn_debugs("buffer wasn't emptied");
+      evn_debug("buffer has %d bytes remaining after sending %d bytes\n", buf->size, sent);
       if (NULL != data && 0 != size) { evn_inbuf_add(buf, data, size); }
       return false;
     }
