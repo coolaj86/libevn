@@ -25,14 +25,13 @@
   });
 
   client.on('end', function () {
-    console.log("[Client] On End (received FIN). readyState: " + client.readyState);
+    console.log("[Client] On End (received FIN).\n\t\treadyState: " + client.readyState);
   });
 
   client.on('timeout', function () {
-    // not used in this example
     console.log("[Client] On Timeout");
     client.end();
-    console.log("[Client] Closing (sent FIN). readyState: " + client.readyState);
+    console.log("[Client] Closing (sent FIN).\n\t\treadyState: " + client.readyState);
   });
 
   client.on('drain', function () {
@@ -40,10 +39,11 @@
   });
 
   client.on('error', function (err) {
-    console.log("[Client] On Error. " + err.message);
+    console.log("[Client] On Error: " + err.message);
   });
 
   client.on('close', function () {
-    console.log("[Client] On Close. readyState: " + client.readyState);
+    console.log("[Client] On Close.\n\t\treadyState: " + client.readyState);
   });
+
 }());

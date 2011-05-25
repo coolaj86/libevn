@@ -21,7 +21,7 @@ static inline void* bufcpy(void* dst, void* src, size_t size)
 
 evn_inbuf* evn_inbuf_create(int size)
 {
-  evn_inbuf* buf = malloc(sizeof (evn_inbuf)); 
+  evn_inbuf* buf = malloc(sizeof (evn_inbuf));
   evn_inbuf_init(buf, size);
   return buf;
 }
@@ -40,7 +40,7 @@ int evn_inbuf_init(evn_inbuf* buf, int size)
   new_data = malloc(size);
 
   buf->start = new_data;
-  buf->end = new_data += size;
+  buf->end = new_data + size;
   buf->bottom = new_data;
   buf->top = new_data;
 
@@ -88,16 +88,35 @@ int evn_inbuf_add(evn_inbuf* buf, void* data, int size)
   size_t trailing = buf->end - buf->top;
   void* new_data;
 
-  if (NULL == data || size == 0)
+  if (NULL == data || 0 == size)
   {
     return 0;
+  }
+
+  if (used != buf->size)
+  {
+    //fprintf(stderr, "inbuf size(%d) does not match the spacing between top and bottom pointers(%zu)\n", buf->size, used);
+    return 1;
+  }
+
+  if ( (0 == used) && (buf->bottom != buf->start) )
+  {
+    // this shouldn't happen, but just in case it does ...
+    //printf("start = %p, bottom = %p, top = %p\n", buf->start, buf->bottom, buf->top);
+    buf->bottom = buf->start;
+    buf->top = buf->start;
+
+    capacity = buf->end - buf->start;
+    used = buf->top - buf->bottom;
+    leading = buf->bottom - buf->start;
+    trailing = buf->end - buf->top;
   }
 
   buf->size = used + size;
 
   if (size <= trailing)
   {
-    // use the 
+    // use the space we still have available
     buf->top = memcpy(buf->top, data, size) + size;
   }
   else if (size <= (leading + trailing) && leading >= (capacity / 2))
@@ -127,7 +146,7 @@ int evn_inbuf_add(evn_inbuf* buf, void* data, int size)
     buf->start = new_data;
     buf->end = new_data + capacity;
     buf->bottom = new_data + leading;
-    buf->top = new_data + used;
+    buf->top = buf->bottom + used;
 
     buf->top = memcpy(buf->top, data, size) + size;
   }
