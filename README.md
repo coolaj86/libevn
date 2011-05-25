@@ -3,13 +3,18 @@ libevnet - Evented Networking in C
 
 `libevnet` is essentially the `net` module of Node.JS (v0.2.6), implemented in `C`
 
-Status: Client has undergone some testing, perhaps Beta quality. Server is still Alpha quality.
+Status: Release Candidate. Although there are a few missing features, `tigerbot` has implemented a simple webserver atop `libevn` and rumor is that it works well.
 
 Build & Install
 ====
 
     make
     sudo make install
+
+Examples
+====
+
+see `source/echo-client.c` and `source/echo-server.c`
 
 API
 ====
@@ -19,7 +24,6 @@ net.Stream
 
   * `evn_stream* evn_create_connection(int port, char* address)` - create a Unix or TCP stream
     * If `port` is `0`, a **Unix Socket** is assumed. Otherwise a **TCP Socket** is assumed.
-  * `evn_`
   * `struct evn_stream* evn_stream_create(int fd)`
   * `struct evn_stream* evn_create_connection(EV_P_ int port, char* address)`
   * `void evn_stream_priv_on_read(EV_P_ ev_io *w, int revents)`
@@ -34,7 +38,7 @@ net.Stream
   * `typedef void (evn_stream_on_secure)(EV_P_ struct evn_stream* stream)` // TODO
   * `typedef void (evn_stream_on_data)(EV_P_ struct evn_stream* stream, void* blob, int size)`
   * `typedef void (evn_stream_on_end)(EV_P_ struct evn_stream* stream)`
-  * `typedef void (evn_stream_on_timeout)(EV_P_ struct evn_stream* stream)` // TODO
+  * `typedef void (evn_stream_on_timeout)(EV_P_ struct evn_stream* stream)`
   * `typedef void (evn_stream_on_drain)(EV_P_ struct evn_stream* stream)`
   * `typedef void (evn_stream_on_error)(EV_P_ struct evn_stream* stream, struct evn_exception* error)`
   * `typedef void (evn_stream_on_close)(EV_P_ struct evn_stream* stream, bool had_error)`
@@ -53,9 +57,3 @@ net.Server
   * `typedef void (evn_server_on_listen)(EV_P_ struct evn_server* server)`
   * `typedef void (evn_server_on_connection)(EV_P_ struct evn_server* server, struct evn_stream* stream)`
   * `typedef void (evn_server_on_close)(EV_P_ struct evn_server* server)`
-
-TODO
-====
-
-  * Provide reference implementations in JavaScript
-  * More tests and usage
