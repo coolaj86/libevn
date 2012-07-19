@@ -77,12 +77,14 @@ int main (int argc, char* argv[])
   // Copy data into the buffer 
   int result;
   result = evn_bufferlist_add(bufferlist, &str[60], 15);
+  assert(0 == result);
   assert(1 == bufferlist->length);
   assert(15 == bufferlist->used);
   assert(40 == bufferlist->size);
 
   // Copy more data into the buffer than the buffer can hold
   result = evn_bufferlist_add(bufferlist, &str, 75);
+  assert(0 == result);
   assert(2 == bufferlist->length);
   assert(90 == bufferlist->used);
   assert(120 == bufferlist->size); // 40 + 80

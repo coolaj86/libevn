@@ -8,7 +8,7 @@ SET(CMAKE_C_FLAGS_DEBUG "-DDEBUG -g3 -ggdb3")
 add_library(evn-buffer-list STATIC evn-buffer-list.c)
 add_library(evn-inbuf STATIC evn-inbuf.c)
 
-add_library(evn SHARED evn.c evn.h evn-buffer-list evn-inbuf)
+add_library(evn SHARED evn.c include/evn.h evn-buffer-list evn-inbuf)
 target_link_libraries(evn ev)
 
 add_executable(evn-bufferlist-test evn-buffer-list-test.c evn-buffer-list)
@@ -25,3 +25,7 @@ INSTALL(TARGETS evn
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib
 )
+INSTALL(FILES ${EVN_SOURCE_DIR}/include/bool.h             DESTINATION include)
+INSTALL(FILES ${EVN_SOURCE_DIR}/include/evn.h              DESTINATION include)
+INSTALL(FILES ${EVN_SOURCE_DIR}/include/evn-buffer-list.h  DESTINATION include)
+INSTALL(FILES ${EVN_SOURCE_DIR}/include/evn-inbuf.h        DESTINATION include)
